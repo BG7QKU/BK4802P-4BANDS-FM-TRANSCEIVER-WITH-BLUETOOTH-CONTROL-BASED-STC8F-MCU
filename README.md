@@ -1,4 +1,4 @@
-# WzSerialPort
+# 该readme是WzSerialPort库源作者的说明
 
 *源码为UTF-8带BOM格式，建议用该编码格式打开*
 
