@@ -1,0 +1,789 @@
+//4 bands NFM transceiver whih Bluetooth control, MCU STC8F2K64S4 part, main function file.
+//Authoir:BG7QKU (Amateur radio call sign) 
+//Company:BNUZ
+//E-mail:1027630917@qq.com
+//Date:May 2, 2020
+//Website: https://github.com/BG7QKU
+#include "STC8F.h"//SFR for STC8F series MCU
+#include "intrins.h"//contained nop
+#include "IICANDDELAY.h"//containsed IIC, delay & EEPROM read/write functions 
+#include "codetab.h"//OLED display words library
+#include<stdlib.h> //contained atof() function
+#include<string.h>
+//those defines are using to calculate other freq.when connected bluetooth. 
+#define IF 0.137//bk4802p if freq.
+#define two24 16777216//2^24
+#define CRYSTAL 21.250//CRYSTAL FREQ. of bk4802p
+
+sbit volume=P1^3;//speaker volume set 
+sbit mute=P1^2;//ALSO Writing programming new 16 channels freq. by UART. High is avliable..
+sbit up=P1^0;//Channel upward set.
+sbit down=P1^1;//Channel downward set.
+sbit LNAEN=P5^5;//RX LNA EN
+//MCU and BK4802N share same 3.3v VCC(STC8MCU must using 3.3v VCC)
+//BK4802N pin19-pin22 must connect to 3.3v.
+sbit ppt=P5^4;//bk4802p NOT CONNECT
+//HPA band:
+sbit uhf=P2^7;
+sbit vhf=P2^6;
+sbit six=P2^5;
+sbit ten=P2^4;
+sbit REMOTE=P1^4;
+//Writing programming new 16 channels freq. by COM.
+//DEFAULT FERQ:TX=RX=439.725mh.uSING "BK4802NCalc.exe to calculate.
+//int rxfreq[]={
+//0x52BE,0xF850,0x0000};
+//int txfreq[]={
+//0x52C5,0x925F,0x0000};
+const char txinf[]="TX...";
+const char rxinf[]="RX...";
+const char blankinf[]="     ";
+char idata newtxfreq[6];
+char idata newrxfreq[6];
+unsigned char xdata newtxfreqinf[8];//template for channel info.
+char idata rxbuff[3];
+//bluetooth CMD table and counter
+const char f1[]="E1\0";
+const char f2[]="E2\0";
+const char f3[]="E3\0";
+const char f4[]="E4\0";
+const char f5[]="E5\0";
+const char f6[]="E6\0";
+const char f7[]="E7\0";
+const char f8[]="E8000000\0";
+const char f41[]="E4000000\0";
+const char f51[]="E5000000\0";
+const char f31[]="E3000000\0";
+const char f61[]="E6000000\0";
+char idata cmdtmp[]="000";
+unsigned char tmp=0;
+char idata blesetfreq[9]={0};
+unsigned char blesymble=0;//symble of bluetooth set other freq.
+unsigned char blesetfreqcnt=0;
+
+//char newrxfreqinf[8];
+int idata rxreg[]={ //rx setting for register
+0x0300,
+0x0c04,
+0xF140,
+0xED00,
+0x17E0,
+0xe0e4,//0xe0e4 for bk4802p(sop16,tssp24,qfn32),or use 0xe0e0
+0x8543,
+0x0700,
+0xA066,
+0xFFFF,
+0xFFE0,
+0x061f,
+0x9E3C,
+0x1F00,
+0xD1c1,
+0x240F,
+0x01FF,
+0xE000,
+0x0335
+ };
+ int idata txreg[]={//tx setting for register
+0x7C00,
+0x0004,
+0xF140,
+0xED00,
+0x17E0,
+0xe0e4,//0xe0e4 for bk4802p(sop16,tssp24,qfn32),or use 0xe0e0
+0x8543,
+0x0700,
+0xA066,
+0xFFFF,
+0xfbe0,
+0x061f,
+0x9e3c,
+0x1f00,
+0xd1C1,
+0x240f,
+0x01FF,
+0xE000,
+0x0340
+};
+
+unsigned int pro=0;//do for programming channel counting
+unsigned char xdata eeprombuf[512];//XRAM Store temploate Channel settings information that down from PC.
+unsigned char vol=0;//do for volume sttting 
+const char close[6]={0x03,0x03,0x03,0x02,0x02,0x01};
+const char rssi[6]={0x45,0x40,0x39,0x33,0x29,0x23};
+  //set value
+unsigned char i,f;// i do for 'for',f do for store channel No.
+unsigned char k=0;//k is do for t/rx 
+unsigned char sq;// sq do for MUTE level set.
+
+void addch(void);//CHANNEL UP SET
+void subch(void);//CHANNEL DOWN SET
+void addmute(void);//SET MUTE LEVEL
+void addvol(void);//SET VOL LEVEL
+void settotx(void);//SEND TO BK4802P TO SET TX 
+void settorx(void);//SEND TO BK4802P TO SET RX
+char HIGHBYTE8(int bi);//GET HIGER 8 BITS(FOR SET OTHER FREQ.)
+char LOWBYTE8(int bi);//GET LOWER 8 BITS(FOR SET OTHER FREQ.)
+int HIGHBYTE16(long bi);//GET HIGER 16 BITS(FOR SET OTHER FREQ.)
+int LOWBYTE16(long bi);//GET LOWER 16 BITS(FOR SET OTHER FREQ.)
+void blesetnewfreq(float freq);//INPUT BLE'S CHARS TO TRANSFER AND SET OTHER FREQ.
+void storeotherfreq(void);//SOTRE OTHER FREQ. TO EEPROM
+void readotherfreq(void);//READ OTHER FREQ FROM EEPROM
+
+void UartInit(void)		//For 9600bps@6.000MHz MCLK
+{
+	SCON = 0x50;		//8???,?????
+	AUXR &= 0xBF;		//???1???Fosc/12,?12T
+	AUXR &= 0xFE;		//??1?????1???????
+	TMOD &= 0x0F;		//?????1?16???????
+	TL1 = 0xF3;		//??????
+	TH1 = 0xFF;		//??????
+	ET1 = 0;		//?????1??
+	TR1 = 1;		//?????1
+//Do for EN interrupt as fllow:
+	//PS=1;
+	ES=1;//DON NOT DELETE
+	EA=1;//DO NOT DELETE
+}
+
+void uart() interrupt 4
+{
+  unsigned char g;   
+	if (TI)
+    {
+        TI = 0;
+    }
+	RI=0;
+        
+         if (pro<512&&mute==1)	
+				 {
+          eeprombuf[pro]=SBUF;//write NEW channel freq. to EEPROM
+				  pro++;
+				 }      
+         else if(!blesymble)
+				 {
+					 cmdtmp[tmp]=SBUF;
+					 tmp++;
+				 }
+				 if (blesymble)
+			 {
+				 blesetfreq[blesetfreqcnt]=SBUF;
+				 blesetfreqcnt++;
+			 }
+				 if(tmp==3)
+				 {
+					 if(strcmp(f1,cmdtmp)==0)
+					 {
+						 tmp=0;
+						 addch();
+					 }
+					 else if(strcmp(f2,cmdtmp)==0)
+					 {
+						 tmp=0;
+						 subch();
+					 }
+					 	else if(strcmp(f3,cmdtmp)==0)
+					 {
+						 tmp=0;
+						 addmute();
+					 }
+					  else if(strcmp(f4,cmdtmp)==0)
+					 {
+						 tmp=0;
+						 REMOTE=1;
+						 settotx();
+					 }
+					 else if(strcmp(f5,cmdtmp)==0)
+					 {
+						 tmp=0;
+						 REMOTE=0;
+						 settorx();
+					 }
+					 else if(strcmp(f6,cmdtmp)==0)
+					 {
+						 tmp=0;
+						 addvol();
+					 }
+					 else if(strcmp(f7,cmdtmp)==0)
+					 {
+						 tmp=0;
+						 blesymble=1;
+						 readotherfreq();
+						 for(i=0; i<8; i++)
+		        {
+			        OLED_P16x16Ch(i*16,6,i+32);
+		        }
+						 k=1;
+					 }
+				 }
+			 
+			 if(blesetfreqcnt==9)
+			 {
+				 if(strcmp(f8,blesetfreq)==0)
+				 {
+					 blesymble=0;
+					 blesetfreqcnt=0;
+					 for(i=0; i<8; i++)
+		       {
+			      OLED_P16x16Ch(i*16,6,i+40);
+		       }
+					 k=1;
+				 }
+				 else if(strcmp(f41,blesetfreq)==0)
+				 {
+					REMOTE=1;
+					settotx();					 
+					blesetfreqcnt=0;
+				 }
+				 else if(strcmp(f51,blesetfreq)==0)
+				 {
+					 REMOTE=0;
+					 settorx();
+					 blesetfreqcnt=0;
+				 }
+				 else if(strcmp(f61,blesetfreq)==0)
+				 {
+					 addvol(); 
+					 blesetfreqcnt=0;
+				 }
+				 else if(strcmp(f31,blesetfreq)==0)
+				 {
+					 addmute(); 
+					 blesetfreqcnt=0;
+				 }
+				 else
+				 {
+					for(g=0;g<8;g++)
+				   newtxfreqinf[g]=blesetfreq[g];
+				  blesetnewfreq(atof(newtxfreqinf));
+					storeotherfreq();
+				  blesetfreqcnt=0;
+				  k=1;
+				 }
+			 }
+			 
+			 
+    			 //?????????
+}
+
+
+//--------------
+void setchannel(char k)//setting new trx freq from EEPROM in MCU
+	 {
+		 int i;
+
+		 //read rx/tx channel freq. from EEPROM.
+		 	for(i=0;i<6;i++)
+			 {
+				newrxfreq[i]=IapRead(i+8+k*32);
+			  newtxfreq[i]=IapRead(i+k*32);
+			 }
+	 }
+void setchannelinf(char k)//setting new trx freq information display on OLED  from EEPROM in MCU
+	 {
+		 int i;
+
+		 	for(i=0;i<8;i++)
+			 {
+				newtxfreqinf[i]=IapRead(i+16+k*32);
+			 }
+	 }
+void setmute(unsigned char s)
+	 {
+		 writing(0x90,22,close[s],rssi[s]);
+		 rxreg[18]=close[s];
+		 rxreg[18]=rxreg[18]<<8|rssi[s];
+	 }
+void setvol(unsigned char v)//send volume settin to BK4802P
+	 {
+		 
+		 rxreg[19]=0x2400+v; 
+		 writing(0x90,19,0x24,v);
+	 }
+void showvol(unsigned char volu)//show Volume level
+	 { 
+		OLED_P8x16Str(112,4,"  ");
+     switch (volu)
+		{
+		 case 0: OLED_P8x16Str(112,4,"00");break;
+		 case 1: OLED_P8x16Str(112,4,"01");break;
+     case 2: OLED_P8x16Str(112,4,"02");break;
+		 case 3: OLED_P8x16Str(112,4,"03");break;
+		 case 4: OLED_P8x16Str(112,4,"04");break;
+		 case 5: OLED_P8x16Str(112,4,"05");break;
+		 case 6: OLED_P8x16Str(112,4,"06");break;
+		 case 7: OLED_P8x16Str(112,4,"07");break;
+		 case 8: OLED_P8x16Str(112,4,"08");break;
+		 case 9: OLED_P8x16Str(112,4,"09");break;
+		 case 10: OLED_P8x16Str(112,4,"10");break;
+		 case 11: OLED_P8x16Str(112,4,"11");break;
+		 case 12: OLED_P8x16Str(112,4,"12");break;
+		 case 13: OLED_P8x16Str(112,4,"13");break;
+		 case 14: OLED_P8x16Str(112,4,"14");break;
+		 default: OLED_P8x16Str(112,4,"15");break;
+	 }
+ }
+void enrfpa(unsigned char band)//4 bands RF PA enable
+	 {
+		 if (band==0x00)
+		 {
+			 uhf=1;
+			 vhf=0;
+			 six=0;
+			 ten=0;
+		 }
+		 else if (band==0x20)
+		 {
+			 uhf=0;
+			 vhf=1;
+			 six=0;
+			 ten=0;
+		 }
+		 else if (band==0x80)
+		 {
+			 uhf=0;
+			 vhf=0;
+			 six=1;
+			 ten=0;
+		 }
+		 else if (band==0xc0)
+		 {
+			 uhf=0;
+			 vhf=0;
+			 six=0;
+			 ten=1;
+		 }
+	 }
+
+void main()
+{
+
+	//Initing 
+	
+	//IO PORT mode settings
+  P3M1=0X0c;
+	P3M0=0X0c;
+	P5M1=0X10;
+	P5M0=0X20;
+	P2M1=0X00;
+	P2M0=0XF0;
+	P1M1=0X0F;
+	P1M0=0XD0;
+	//IO PORT Pull up resister settiog
+	P1PU=0XC0;
+	P3PU=0X0C;
+	//set RF PA(HPA) shout down 
+	     uhf=0;
+			 vhf=0;
+			 six=0;
+			 ten=0;
+	//start init OLED
+  Delay50ms();
+	LNAEN=1;
+	REMOTE=0;
+	OLED_Init(); //OLED初始化
+	Draw_BMP(0,0,128,8,BMP2);//SHOW Sailor Moon picture.
+	delay(10000);
+	OLED_CLS();//cls清屏
+			for(i=0; i<8; i++)//通过点整显示汉字 , i表示字表数组的位置 .table 
+		{
+			OLED_P16x16Ch(i*16,0,i);//In the name of the Moon ,I will punish you.
+		 	OLED_P16x16Ch(i*16,2,i+8); 	//Moon promise power, make up!
+		}
+		OLED_P8x16Str(0,6,"BG7QKU");
+		delay(10000);
+		OLED_CLS();//清屏
+		
+		
+		 while (mute==1)
+		 {
+       UartInit();
+       OLED_P8x16Str(0,0,"PROG Start");
+			 
+		   if(pro==512)
+			{
+				IapErase(0x0000);//erase EEPROM before write
+				Delay10ms();		
+				for(i=0;i<512;i++)
+				{	
+				 IapProgram(i,eeprombuf[i]);
+         RI=0;                            //?????????
+         SBUF=IapRead(i);  //???????????????
+         while(!TI);                    //????????
+         TI=0;                            //?????????
+	      }
+			  
+				
+				OLED_P8x16Str(0,2,"PROG finish");
+		   }
+			 	delay(1000);
+		 }
+		 
+		 OLED_CLS();//清屏		
+		 OLED_P8x16Str(0,0,"BG7QKU");
+		 UartInit();
+			f=IapRead(0x0400);//read store channel No. from eeprom
+			if (f>15)
+				f=0;
+			setchannel(f);
+			setchannelinf(f);      
+			OLED_P8x16Str(0,4,newtxfreqinf);
+			
+			//read mute settingfrom eeprom
+			for(i=0; i<2; i++)
+		 {
+			 OLED_P16x16Ch(i*16+48,2,i+48);
+		 }
+		 OLED_P8x16Str(80,2,"^");
+			sq=IapRead(0x0200);
+			if(sq>=6)
+				sq=0;
+			OLED_P8x16Str(48,0,"      ");
+			for(i=0;i<=sq;i++)
+			  OLED_P8x16Str(48+i*8,0,"-");
+			
+			  setmute(sq);
+			k=1;
+			
+			//read vol setting from eeprom
+			vol=IapRead(0x0600);
+			if(vol>15)
+				vol=0;
+		  setvol(vol);
+			showvol(vol);
+			for(i=0; i<8; i++)
+		 {
+			 OLED_P16x16Ch(i*16,6,i);
+		 }
+		 for(i=0; i<2; i++)
+		 {
+			 OLED_P16x16Ch(i*16+96,2,i+50);
+		 }
+		 OLED_P6x8Str(32,3,"v");
+			for(i=0; i<2; i++)
+		 {
+			 OLED_P16x16Ch(i*16,2,i+52);
+		 }
+	//into user mode
+		
+		while(1)
+		{
+			
+			if(up==1&&blesymble==0)//up setting channel
+			{
+			
+				Delay30ms();//kill swim
+				if(up==1)
+				{
+				 Delay30ms();//down to LOW to set channel
+				if(up==0)
+				{
+
+					addch();
+				}
+			 }
+			}
+			
+				if(down==1&&blesymble==0)//teat channel change key
+			{
+				Delay30ms();//kill swim
+				if(down==1)
+				{
+				 Delay30ms();//down to LOW to set channel
+				if(down==0)
+				{
+          subch();
+					
+				}
+			 }
+			}
+			
+			if(mute==1)
+			{
+				Delay30ms();//down to LOW to set channel
+			if(mute==1)
+			{
+				Delay30ms();
+				if(mute==0)
+				{ 
+
+					addmute();
+				}
+			 }	
+			}
+			
+			if(volume==1)//Setting volume
+			{
+				Delay30ms();
+			if(volume==1)
+			{
+				Delay30ms();
+				if(volume==0)
+				{
+
+         addvol();
+				}
+			 }	
+			}
+			
+			if(ppt==1&&k==0)//Set to TX if PTT =HIGH.
+			{
+       
+				Delay30ms();
+				if(ppt==1)
+				{
+          settotx();
+				}
+			}
+				if(ppt==0&&k==1)//Set to RX.
+				{
+
+					Delay30ms();
+				if(ppt==0)
+				{
+           settorx();
+			  }
+		   } 
+		}
+}
+void addch(void)
+{
+	        f++;
+					if(f>15)
+						f=0;
+					IapErase(0x0400);//erase EEPROM before write
+					IapProgram(0x0400,f);//write EEPORM
+					setchannel(f);
+				  setchannelinf(f);
+				  OLED_P8x16Str(0,4,newtxfreqinf);
+					
+			    k=1;
+}	
+void subch(void)
+{
+	        f--;
+					if(f<0)
+						f=15;
+					IapErase(0x0400);//erase EEPROM before write
+					IapProgram(0x0400,f);//write EEPORM
+					setchannel(f);
+				  setchannelinf(f);
+				  OLED_P8x16Str(0,4,newtxfreqinf);
+					
+			    k=1;
+}
+void addmute(void)
+{
+	        sq++;
+					if (sq>=6)
+						sq=0;
+					setmute(sq);
+					IapErase(0x0200);//erase EEPROM before write
+					IapProgram(0x0200,sq);//write EEPORM
+					OLED_P8x16Str(48,0,"      ");
+          for(i=0;i<=sq;i++)
+			      OLED_P8x16Str(48+i*8,0,"-");
+}
+void addvol(void)
+{
+						vol++;
+					if (vol>15)
+						vol=0;
+					setvol(vol);
+					IapErase(0x0600);//erase EEPROM before write
+					IapProgram(0x0600,vol);//write EEPORM
+					showvol(vol);
+}
+void settotx(void)
+{
+	        if(blesymble==0)
+					{
+						setchannel(f);
+				    setchannelinf(f);
+					}
+				  LNAEN=0;
+					OLED_P8x16Str(0,4,newtxfreqinf);
+					Delay30ms();
+					enrfpa(newtxfreq[4]);
+					  for(i=4;i<=22;i++)
+	        {
+				   writing(0x90,i,HIGHBYTE(txreg[i-4]),LOWBYTE(txreg[i-4]));
+			    }
+			   writing(0x90,23,0xae,0XD0);//wirie REG23 B09 to tx!
+		      for(i=5;i>2;i--)
+		      {
+			     writing(0x90,i-3,newtxfreq[2*(i-3)],newtxfreq[2*(i-3)+1]);
+		      }
+					
+					
+					delay(100);
+					OLED_P8x16Str(64,4,blankinf);
+					OLED_P8x16Str(64,4,txinf);
+					
+					k=1;
+}
+void settorx(void)
+{
+		        if(blesymble==0)
+					{
+						setchannel(f);
+				    setchannelinf(f);
+					}
+	        //set rf pa shout down.
+          uhf=0;
+			    vhf=0;
+			    six=0;
+			    ten=0;
+					LNAEN=1;
+					Delay30ms();
+					writing(0x90,23,0xac,0XD0);
+					  for(i=4;i<=22;i++)
+	       {
+				   writing(0x90,i,HIGHBYTE(rxreg[i-4]),LOWBYTE(rxreg[i-4]));
+			    }
+			    writing(0x90,23,0xac,0XD0);
+		      for(i=5;i>2;i--)
+		      {
+			     writing(0x90,i-3,newrxfreq[2*(i-3)],newrxfreq[2*(i-3)+1]);
+		      }
+
+					delay(100);
+					setvol(vol);
+					setmute(sq);
+					OLED_P8x16Str(0,4,newtxfreqinf);
+					OLED_P8x16Str(64,4,blankinf);
+					OLED_P8x16Str(64,4,rxinf);
+					
+					k=0;
+}
+char HIGHBYTE8(int bi)//Get higer 8 bit
+	 {
+		 unsigned char highER ;
+		 highER=bi>>8;
+		 return highER;
+	 }
+char LOWBYTE8(int bi)//Get lower 8 bit
+	 {
+		 unsigned char lowER;
+		 lowER=bi&0xff;
+		 return lowER;
+	 }
+int HIGHBYTE16(long bi)//Get higer 8 bit
+	 {
+		 int highER;
+		 highER=bi>>16;
+		 return highER;
+	 }
+int LOWBYTE16(long bi)//Get lower 8 bit
+	 {
+		 int lowER;
+		 lowER=bi&0xffff;
+		 return lowER;
+	 }
+void blesetnewfreq(float freq)
+{
+	unsigned long rx,tx;
+	long rxh,rxl,txh,txl;
+	char ndiv;
+	
+	if(freq<=512&&freq>=384)
+	{
+	 newtxfreq[5]=0x00;
+	 newrxfreq[5]=0x00;
+	 newtxfreq[4]=0x00;
+	 newrxfreq[4]=0x00;
+	 ndiv=4;
+    }
+	else if(freq<=170&&freq>=128)
+	{
+	 newtxfreq[4]=0x20;
+	 newrxfreq[4]=0x20;
+	 newtxfreq[5]=0x02;
+	 newrxfreq[5]=0x02;
+	 ndiv=12;
+    }
+	else if(freq<=57&&freq>=43)
+	{
+	 newtxfreq[4]=0x80;
+	 newrxfreq[4]=0x80;
+	 newtxfreq[5]=0x08;
+	 newrxfreq[5]=0x08;
+	 ndiv=36;
+	}
+	else if(freq<=46&&freq>=35)
+	{
+	 newtxfreq[4]=0xa0;
+	 newrxfreq[4]=0xa0;
+	 newtxfreq[5]=0x0a;
+	 newrxfreq[5]=0x0a;
+	 ndiv=44;
+    }
+	else if(freq<=32&&freq>=24)
+	{
+	 newtxfreq[4]=0xc0;
+	 newrxfreq[4]=0xc0;
+	 newtxfreq[5]=0x0f;
+	 newrxfreq[5]=0x0f;
+	 ndiv=64;
+    }
+
+	rx=((freq-IF*1)*ndiv*two24)/CRYSTAL;
+	tx=(freq*ndiv*two24)/CRYSTAL;
+
+	txh=HIGHBYTE16(tx);
+	txl=LOWBYTE16(tx);
+	
+	rxh=HIGHBYTE16(rx);
+	rxl=LOWBYTE16(rx);
+	
+	newtxfreq[0]=HIGHBYTE8(txh);
+	newtxfreq[1]=LOWBYTE8(txh);
+	newtxfreq[2]=HIGHBYTE8(txl);
+	newtxfreq[3]=LOWBYTE8(txl);
+	
+	newrxfreq[0]=HIGHBYTE8(rxh);
+	newrxfreq[1]=LOWBYTE8(rxh);
+	newrxfreq[2]=HIGHBYTE8(rxl);
+	newrxfreq[3]=LOWBYTE8(rxl);
+}
+void readotherfreq(void)
+{
+  unsigned int addr;
+	unsigned char fn;
+	for(addr=0x0800;addr<=0x0805;addr++)
+	{
+	 fn=addr-0x0800;
+	 newtxfreq[fn]=IapRead(addr);
+	}
+	for(addr=0x0808;addr<=0x080d;addr++)
+	{
+	 fn=addr-0x0808;
+	 newrxfreq[fn]=IapRead(addr);
+	}
+	for(addr=0x0810;addr<=0x0817;addr++)
+	{
+	 fn=addr-0x0810;
+	 newtxfreqinf[fn]=IapRead(addr);
+	}
+}
+void storeotherfreq(void)
+{
+	unsigned int addr;
+	unsigned char fn;
+	IapErase(0x0805);
+	Delay10ms();
+	for(addr=0x0800;addr<=0x0805;addr++)
+	{
+	 fn=addr-0x0800;
+   IapProgram(addr,newtxfreq[fn]);
+	}
+  for(addr=0x0808;addr<=0x080d;addr++)
+	{
+	 fn=addr-0x0808;
+   IapProgram(addr,newrxfreq[fn]);
+	}
+		for(addr=0x0810;addr<=0x0817;addr++)
+	{
+	 fn=addr-0x0810;
+   IapProgram(addr,newtxfreqinf[fn]);
+	}
+}
