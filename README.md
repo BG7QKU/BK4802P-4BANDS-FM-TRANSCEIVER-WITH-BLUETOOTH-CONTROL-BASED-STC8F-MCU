@@ -1,6 +1,8 @@
 #概述
 该收发机可以实现在10米，6米，2米，0.7米这四个频段内进行窄带调频(NFM)通信。使用SSD1306 OLED模块作为显示。可以通过蓝牙串口透传，用APP遥控，以及通过APP来手置频（非预先写好的频道以外的其他频率）。也有PC机上的Windows控制台写频程序，可以通过串口来写频。
-使用JDY-08蓝牙透传模块。配套APP是在app.wxbit.com上在线写的android程序。现在因为注册没有超过30天，暂时不能发布其代码设计在其展厅公开，用QQ可直接登录，无需注册。下载地址为http://qr887427.fx.sj.360.cn/qing/softDU?sid=&amp;apk=https%3A%2F%2Fapp.wxbit.com%2Fb%2Fcyzlx2&amp;name=&amp;logo=&amp;size=3551732&amp;ref=seapk&amp;sign=d99f50e353815caf525bdfc3d49b0209&amp;v=140121">http://qr887427.fx.sj.360.cn/qing/softDU?sid=&amp;apk=https%3A%2F%2Fapp.wxbit.com%2Fb%2Fcyzlx2&amp;name=&amp;logo=&amp;size=3551732&amp;ref=seapk&amp;sign=d99f50e353815caf525bdfc3d49b0209&amp;v=140121
+使用JDY-08蓝牙透传模块。配套APP是在app.wxbit.com上在线写的android程序。现在因为注册没有超过30天，暂时不能发布其代码设计在其展厅公开，用QQ可直接登录，无需注册。下载地址为链接：https://pan.baidu.com/s/1ueZrV7DRUZiuVMZvmIVEpg 
+提取码：6ljr 
+复制这段内容后打开百度网盘手机App，操作更方便哦
 硬件参考电路图过几天整理好之后上传。
 # 以下内容是这里用到的WzSerialPort库源作者的说明（相关源文件在SRC中），注意Windows控制台上位机写频程序不能用DEV C++来编译，如果电脑不嫩用VS，用C-Free就可以
 
