@@ -29,6 +29,7 @@ sbit vhf=P2^6;
 sbit six=P2^5;
 sbit ten=P2^4;
 sbit REMOTE=P1^4;
+sbit bleconnected=P2^3;
 //Writing programming new 16 channels freq. by COM.
 //DEFAULT FERQ:TX=RX=439.725mh.uSING "BK4802NCalc.exe to calculate.
 //int rxfreq[]={
@@ -111,7 +112,8 @@ unsigned char vol=0;//do for volume sttting
 const char close[6]={0x03,0x03,0x03,0x02,0x02,0x01};
 const char rssi[6]={0x45,0x40,0x39,0x33,0x29,0x23};
   //set value
-unsigned char i,f;// i do for 'for',f do for store channel No.
+unsigned int i;
+unsigned char f;// i do for 'for',f do for store channel No.
 unsigned char k=0;//k is do for t/rx 
 unsigned char sq;// sq do for MUTE level set.
 
@@ -159,12 +161,12 @@ void uart() interrupt 4
           eeprombuf[pro]=SBUF;//write NEW channel freq. to EEPROM
 				  pro++;
 				 }      
-         else if(!blesymble)
+         else if(bleconnected)
 				 {
 					 cmdtmp[tmp]=SBUF;
 					 tmp++;
 				 }
-				 if (blesymble)
+				 if (blesymble&&bleconnected)
 			 {
 				 blesetfreq[blesetfreqcnt]=SBUF;
 				 blesetfreqcnt++;
@@ -380,18 +382,18 @@ void main()
   Delay50ms();
 	LNAEN=1;
 	REMOTE=0;
-	OLED_Init(); //OLED初始化
+	OLED_Init(); //OLED³õÊ¼»¯
 	Draw_BMP(0,0,128,8,BMP2);//SHOW Sailor Moon picture.
 	delay(10000);
-	OLED_CLS();//cls清屏
-			for(i=0; i<8; i++)//通过点整显示汉字 , i表示字表数组的位置 .table 
+	OLED_CLS();//clsÇåÆÁ
+			for(i=0; i<8; i++)//Í¨¹ýµãÕûÏÔÊ¾ºº×Ö , i±íÊ¾×Ö±íÊý×éµÄÎ»ÖÃ .table 
 		{
 			OLED_P16x16Ch(i*16,0,i);//In the name of the Moon ,I will punish you.
 		 	OLED_P16x16Ch(i*16,2,i+8); 	//Moon promise power, make up!
 		}
 		OLED_P8x16Str(0,6,"BG7QKU");
 		delay(10000);
-		OLED_CLS();//清屏
+		OLED_CLS();//ÇåÆÁ
 		
 		
 		 while (mute==1)
@@ -406,19 +408,22 @@ void main()
 				for(i=0;i<512;i++)
 				{	
 				 IapProgram(i,eeprombuf[i]);
-         RI=0;                            //?????????
-         SBUF=IapRead(i);  //???????????????
-         while(!TI);                    //????????
-         TI=0;                            //?????????
+//         RI=0;                            //?????????
+//         SBUF=IapRead(i);  //???????????????
+//         while(!TI);                    //????????
+//         TI=0; 
+                           //?????????
+					_nop_();
 	      }
 			  
 				
 				OLED_P8x16Str(0,2,"PROG finish");
+				break;
 		   }
 			 	delay(1000);
 		 }
 		 
-		 OLED_CLS();//清屏		
+		 OLED_CLS();//ÇåÆÁ		
 		 OLED_P8x16Str(0,0,"BG7QKU");
 		 UartInit();
 			f=IapRead(0x0400);//read store channel No. from eeprom
